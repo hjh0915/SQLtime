@@ -1,0 +1,264 @@
+表结构
+======
+
+jr=> \d brch_qry_dtl;
+            Table "public.brch_qry_dtl"
+    Column     |         Type          | Modifiers 
+---------------+-----------------------+-----------
+ acc           | character varying(19) | 
+ tran_date     | date                  | 
+ amt           | numeric(16,2)         | 
+ dr_cr_flag    | integer               | 
+ rpt_sum       | character varying(8)  | 
+ tran_inst     | character varying(8)  | 
+ acct_open_org | character varying(8)  | 
+ timestamp1    | character varying(14) | 
+Indexes:
+    "idx_qry_dtl_org_dr" btree (acct_open_org, tran_date, dr_cr_flag)
+
+创建数据库函数
+==============
+
+CREATE OR REPLACE FUNCTION ceil_minute(TIMESTAMP WITH TIME ZONE, INTERVAL)
+RETURNS TIMESTAMP WITH TIME ZONE AS $$
+  SELECT date_trunc('hour', $1) + $2 * ceil((date_part('minute', $1)+date_part('second', $1)/100.0) / (to_char($2, 'MI')::integer * 1.0))
+$$ LANGUAGE SQL;
+
+代码片段
+========
+
+    def get_time_range_dtl(self, brch, tran_date, dr_cr_flag):
+        '''时间间隔区间交易金额汇总'''
+        
+        #摘要分布
+        details = self.get_time_range_dtl_apart(brch, tran_date, dr_cr_flag)
+
+        d = datetime.strptime(tran_date, '%Y%m%d') - timedelta(days=1)
+        start = d.strftime('%Y%m%d') + '223000'
+        end = tran_date[:8] + '230000'
+
+        self.cursor.execute("""
+            select t1.time, coalesce(t2.amt, 0) as amt
+            from (
+                select time
+                from generate_series(to_timestamp(%s, 'yyyymmddhh24miss'), to_timestamp(%s, 'yyyymmddhh24miss'), '30 min') as time
+            ) t1
+            left join (
+                select p.gs, sum(p.amt) as amt from (
+                    select ceil_minute(to_timestamp(timestamp1, 'yyyymmddhh24miss'), '30 minutes') as gs, amt
+                        from brch_qry_dtl 
+                        where acct_open_org=%s 
+                          and tran_date=%s 
+                          and dr_cr_flag=%s) p
+                group by gs
+            ) t2
+            on (t1.time=t2.gs)
+            order by t1.time
+        """, (start, end, brch, tran_date, int(dr_cr_flag)))
+
+        results = []
+        for row in self.cursor.fetchall():
+            d = dict()
+            d['time'] = row[0]
+            d['amt'] = row[1]
+            
+            rec = []
+            for x in details:
+                if x['time'] == row[0]:
+                    if x['rpt_sum'] is not None:
+                        k = {'amt': float(x['amt']), 'rpt_sum': x['rpt_sum'].encode('utf8')}
+                        rec.append(k)
+
+            d['details'] = rec
+
+            results.append(d)
+
+        return results
+
+    def get_time_range_dtl_apart(self, brch, tran_date, dr_cr_flag):
+        '''时间间隔区间交易金额摘要分布汇总'''
+         
+        d = datetime.strptime(tran_date, '%Y%m%d') - timedelta(days=1)
+        start = d.strftime('%Y%m%d') + '223000'
+        end = tran_date[:8] + '230000'
+
+        self.cursor.execute("""
+            select t1.time, t2.rpt_sum, coalesce(t2.amt, 0) as amt
+            from (
+                select time
+                from generate_series(to_timestamp(%s, 'yyyymmddhh24miss'), to_timestamp(%s, 'yyyymmddhh24miss'), '30 min') as time
+            ) t1
+            left join (
+                select p.gs, p.rpt_sum, sum(p.amt) as amt from (
+                    select ceil_minute(to_timestamp(timestamp1, 'yyyymmddhh24miss'), '30 minutes') as gs, rpt_sum, amt
+                        from brch_qry_dtl 
+                        where acct_open_org=%s 
+                          and tran_date=%s 
+                          and dr_cr_flag=%s) p
+                group by p.gs, p.rpt_sum
+            ) t2
+            on (t1.time=t2.gs)
+            order by t1.time, amt desc
+        """, (start, end, brch, tran_date, int(dr_cr_flag)))
+
+        results = []
+        for row in self.cursor.fetchall():
+            d = dict()
+            d['time'] = row[0]
+            d['rpt_sum'] = row[1].decode('utf8') if row[1] is not None else None
+            d['amt'] = row[2]
+            results.append(d)
+
+        return results 
+
+html代码片段
+==============
+
+<div class="row">
+    <div class="chart col-12 d-flex align-items-center justify-content-center">
+        <div id="lineChart" style="width: 100%; height: 350px;"></div>
+    </div>
+</div>
+
+js代码片段
+==========
+
+<script>
+    $().ready(function () {         
+      Highcharts.chart('lineChart', { 
+        chart: {
+            type: 'line'
+        },
+        title: {
+            text: '每30分钟流入流出金额'
+        },
+        subtitle: {
+            text: ''
+        },
+        xAxis: {
+            categories: {{ gs_time|safe }},
+            labels: {
+              y : 20,
+              rotation: -45,
+              align: 'right' 
+            }
+        },
+        yAxis: {
+            min: 0,
+            title: {
+                text: '流入流出金额'
+            }
+        },
+        tooltip: {
+            // head + 每个 point + footer 拼接成完整的 table
+            formatter: function() {
+              var msg = '';
+
+              msg = msg + '<div><b>' + this.x + '</b></div>';
+              msg = msg + '<b>[' + this.series.name + '] ' + this.y + '</b>';
+              msg = msg + '<div>';
+              if (this.y != 0.0) {
+                var dtl = this.point.details;
+                for (var i in dtl) {
+                  msg = msg + '<div>';
+                  msg = msg + dtl[i].rpt_sum + ':' + dtl[i].amt + ' ';
+                  msg = msg + '</div>';
+                }
+              }
+              msg = msg + '</div>';
+              return msg;
+            },
+            useHTML: true
+        },
+        plotOptions: {
+            line: {
+              lineWidth: 3,
+              marker: {
+                enabled: false,
+                radius: 1
+              },
+              shadow: false,
+              states: {
+                hover: {
+                  lineWidth: 2
+                }
+              },
+              threshold: null
+            }
+        },
+        credits: {
+            enabled: false
+        },
+        series: [{
+            name: '流入',
+            data: {{ gs_amt_in|tojson|safe }}
+        },{
+            name: '流出',
+            data: {{ gs_amt_out|tojson|safe }}
+        }]
+      });
+    });
+</script>
+
+<script>
+    $().ready(function () {         
+      Highcharts.chart('areaChart', { 
+        chart: {
+            type: 'area'
+        },
+        title: {
+            text: '每30分钟流入流出金额累计量'
+        },
+        subtitle: {
+            text: ''
+        },
+        xAxis: {
+            categories: {{ gs_time|safe }},
+            labels: {
+              y : 20,
+              rotation: -45,
+              align: 'right' 
+            }
+        },
+        yAxis: {
+            min: 0,
+            title: {
+                text: '流入流出金额'
+            }
+        },
+        tooltip: {
+            // head + 每个 point + footer 拼接成完整的 table
+            headerFormat: '<span style="font-size:10px">{point.key}</span><table>',
+            pointFormat: '<tr><td style="color:{series.color};padding:0">{series.name}: </td>' +
+            '<td style="padding:0"><b>{point.y:1.2f}</b></td></tr>',
+            footerFormat: '</table>',
+            shared: true,
+            useHTML: true
+        },
+        plotOptions: {
+          area: {
+            marker: {
+              enabled: false,
+              symbol: 'circle',
+              radius: 2,
+              states: {
+                hover: {
+                  enabled: true
+                }
+              }
+            }
+          }
+        },
+        credits: {
+            enabled: false
+        },
+        series: [{
+            name: '流入',
+            data: {{ gs_sum_in|safe }}
+        },{
+            name: '流出',
+            data: {{ gs_sum_out|safe }}
+        }]
+      });
+    });
+</script>
