@@ -12,6 +12,16 @@ def get_data(filename: str) -> List[str]:
 
     return data
 
+def convert_data(data: List[str], filename: str) -> None:
+    """把获取的数据转换放入CSV文件类型中"""
+
+    f = open(filename, 'wt')
+    for x in data:
+        y = ','.join(x)
+        y += '\n'
+        f.write(y)
+
+
 def get_sum(values: list) -> list:
     """最后返回的列表是为：[每个时段的金额总和]"""
 
@@ -46,3 +56,7 @@ def merge_details(v1: List[Dict], v2:List[Dict]) -> List[Dict]:
 
     return results
 
+
+if __name__ == '__main__':
+    data = get_data('initdata/data.txt')
+    convert_data(data, 'initdata/data.csv')
