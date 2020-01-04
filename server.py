@@ -1,4 +1,5 @@
 import db
+import pddb
 import utils
 from decimal import Decimal
 from flask import Flask
@@ -18,7 +19,7 @@ def num_filter(x: Decimal):
 
 @app.route('/show_rpt_sum_apart/<tran_date>')
 def show_rpt_sum_apart(tran_date: str):
-    q = db.DB()
+    q = pddb.PDDB()
     inner = q.get_time_range_dtl(tran_date, '1')
     outer = q.get_time_range_dtl(tran_date, '2')
 

@@ -17,3 +17,10 @@ CREATE OR REPLACE FUNCTION将创建一个新函数或者替换一个现有的函
 export FLASK_APP=server.py
 export FLASK_ENV=development
 flask run
+
+使用pandas
+---------
+import pandas as pd                                                     
+
+df = pd.read_csv('initdata/data.csv', names=['tran_date', 'timestampl', 
+ 'acc', 'amt', 'dr_cr_flag', 'rpt_sum'])

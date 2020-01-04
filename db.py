@@ -96,10 +96,10 @@ class DB(object):
                 from (
                     select ceil_minute(to_timestamp(timestampl, 'yyyymmddhh24miss'), '30 minutes') as gs, 
                     timestampl, amt 
-                from brch_qry_dtl 
-                where tran_date=%s 
-                    and dr_cr_flag=%s
-                order by timestampl) as p
+                    from brch_qry_dtl 
+                    where tran_date=%s 
+                        and dr_cr_flag=%s
+                    order by timestampl) as p
                 group by p.gs) t2
             on (t1.time=t2.gs)
             order by t1.time
